@@ -12,7 +12,7 @@ import java.util.LinkedList;
 import java.util.Queue;
 
 public class ECGView extends View {
-    private static final int MAX_POINTS = 500; // Reduced for better performance
+    private static final int MAX_POINTS = 200; // Reduced for wider spacing between points
     private static final int SAMPLING_RATE_HZ = 200;
 
     private Paint paint;
@@ -52,20 +52,17 @@ public class ECGView extends View {
 
     // Method to add real EKG data
     public void addRealEKGValue(float ekgValue) {
-        android.util.Log.d("ECGView", "addRealEKGValue: Adding EKG value: " + ekgValue);
+        android.util.Log.d("ECGView", "addRealEKGValue: Adding EXACT EKG value: " + ekgValue);
 
         hasRealData = true;
         lastRealEkgValue = ekgValue;
 
-        // Normalize EKG value to display range (-1 to 1)
-        float normalizedValue = normalizeEKGValue(ekgValue);
-        android.util.Log.d("ECGView", "addRealEKGValue: Normalized value: " + normalizedValue);
+        // Use EXACT value from sensor - NO NORMALIZATION!
+        android.util.Log.d("ECGView", "addRealEKGValue: Using exact sensor value: " + ekgValue);
 
         // Add to data queue (shift the wave to the left)
         ecgData.poll();
-        ecgData.add(normalizedValue);
-
-        // NO ANIMATION - just add the real data point
+        ecgData.add(ekgValue); // EXACT VALUE FROM SENSOR
 
         // Trigger immediate redraw
         invalidate();
@@ -109,11 +106,12 @@ public class ECGView extends View {
         // Create variation around the center value
         float deviation = rawValue - centerValue;
 
-        // Scale the deviation to make it more visible (-2 to +2 range for wider graph)
-        float scaledDeviation = (deviation / 50f); // Divide by 50 to get good range
+        // Scale the deviation to make it more visible (-3 to +3 range for even wider
+        // graph)
+        float scaledDeviation = (deviation / 30f); // Divide by 30 for more sensitive scaling
 
         // Clamp to reasonable display range
-        float normalizedValue = Math.max(-2f, Math.min(2f, scaledDeviation));
+        float normalizedValue = Math.max(-3f, Math.min(3f, scaledDeviation));
 
         android.util.Log.d("ECGView", "normalizeEKGValue: Raw=" + rawValue +
                 ", Deviation=" + deviation + ", Normalized=" + normalizedValue);
@@ -127,21 +125,38 @@ public class ECGView extends View {
 
         float width = getWidth();
         float height = getHeight();
-        float centerY = height / 2;
-        float scale = height * 0.3f; // Increased scale for wider amplitude
         float pixelsPerPoint = width / MAX_POINTS;
 
-        // Draw the path
+        // Draw the path using EXACT sensor values
         path.reset();
         int i = 0;
-        float minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
+        float minValue = Float.MAX_VALUE, maxValue = Float.MIN_VALUE;
+
+        // First pass: find min/max values for scaling
+        for (Float point : ecgData) {
+            if (point != FLAT_LINE_VALUE) {
+                minValue = Math.min(minValue, point);
+                maxValue = Math.max(maxValue, point);
+            }
+        }
+
+        // Use dynamic scaling based on actual data range
+        float valueRange = maxValue - minValue;
+        if (valueRange == 0)
+            valueRange = 1; // Avoid division by zero
 
         for (Float point : ecgData) {
             float x = i * pixelsPerPoint;
-            float y = centerY - (point * scale);
+            float y;
 
-            minY = Math.min(minY, y);
-            maxY = Math.max(maxY, y);
+            if (point == FLAT_LINE_VALUE) {
+                // Flat line in center
+                y = height / 2;
+            } else {
+                // Scale the EXACT value to fit the screen height
+                float normalizedPoint = (point - minValue) / valueRange; // 0 to 1
+                y = height - (normalizedPoint * height * 0.8f) - (height * 0.1f); // Use 80% of height with 10% margin
+            }
 
             if (i == 0) {
                 path.moveTo(x, y);
@@ -156,7 +171,8 @@ public class ECGView extends View {
         // Debug logging occasionally
         if (hasRealData && System.currentTimeMillis() % 1000 < 50) {
             android.util.Log.d("ECGView",
-                    "onDraw: Drawing " + ecgData.size() + " points, Y range: " + minY + " to " + maxY);
+                    "onDraw: Drawing " + ecgData.size() + " points, EXACT Value range: " + minValue + " to "
+                            + maxValue);
         }
     }
 

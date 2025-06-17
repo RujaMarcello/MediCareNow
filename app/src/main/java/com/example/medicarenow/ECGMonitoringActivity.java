@@ -95,36 +95,44 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
     // BluetoothService.BluetoothDataListener implementation
     @Override
     public void onDataReceived(String data) {
-        Log.d(TAG, "onDataReceived: Raw EKG data: " + data);
+        Log.d(TAG, "onDataReceived: Raw sensor data: " + data);
 
-        // Parse the data to extract EKG value using multiple methods
+        // Parse the data to extract both EKG and pulse values
         try {
             float ekgValue = extractEKGValue(data);
+            int pulseValue = extractPulseValue(data);
 
-            if (ekgValue > 0) {
-                Log.d(TAG, "onDataReceived: Successfully extracted EKG value: " + ekgValue);
+            Log.d(TAG, "onDataReceived: Extracted EKG=" + ekgValue + ", Pulse=" + pulseValue);
 
-                runOnUiThread(() -> {
-                    // Add the EKG value to the graph
+            runOnUiThread(() -> {
+                // Add the EKG value to the graph
+                if (ekgValue > 0) {
                     ecgView.addRealEKGValue(ekgValue);
+                }
 
-                    // Calculate heart rate from EKG data
-                    int calculatedHR = calculateHeartRateFromEKG(ekgValue);
-                    if (calculatedHR > 0) {
-                        currentHeartRate = calculatedHR;
+                // Use the real pulse value for heart rate display
+                if (pulseValue > 0 && pulseValue >= 40 && pulseValue <= 200) {
+                    currentHeartRate = pulseValue;
+                    hasRealHeartRate = true;
+                    heartRateText.setText("Heart Rate: " + currentHeartRate + " BPM (Sensor)");
+                    ecgView.setHeartRate(currentHeartRate);
+                    Log.d(TAG, "onDataReceived: Using real pulse value: " + currentHeartRate);
+                } else if (ekgValue > 0) {
+                    // Fallback: try to estimate from EKG if no valid pulse
+                    int estimatedHR = calculateHeartRateFromEKG(ekgValue);
+                    if (estimatedHR > 0) {
+                        currentHeartRate = estimatedHR;
                         hasRealHeartRate = true;
-                        heartRateText.setText("Heart Rate: " + currentHeartRate + " BPM (Real-time)");
+                        heartRateText.setText("Heart Rate: " + currentHeartRate + " BPM (Estimated)");
                         ecgView.setHeartRate(currentHeartRate);
-                    } else {
-                        // EKG value too low/invalid - show that we can't calculate HR
-                        heartRateText.setText("Heart Rate: -- BPM (EKG too low)");
                     }
-                });
-            } else {
-                Log.w(TAG, "onDataReceived: Could not extract valid EKG value from: " + data);
-            }
+                } else {
+                    // No valid data
+                    heartRateText.setText("Heart Rate: -- BPM (No data)");
+                }
+            });
         } catch (Exception e) {
-            Log.e(TAG, "onDataReceived: Error processing EKG data", e);
+            Log.e(TAG, "onDataReceived: Error processing sensor data", e);
         }
     }
 
@@ -192,6 +200,74 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
         } catch (Exception e) {
             Log.e(TAG, "extractEKGValue: Error extracting EKG value", e);
             return 0f;
+        }
+    }
+
+    private int extractPulseValue(String data) {
+        try {
+            // Method 1: Try using Gson for proper JSON parsing
+            if (data.contains("{") && data.contains("}")) {
+                try {
+                    com.google.gson.Gson gson = new com.google.gson.Gson();
+                    com.google.gson.JsonObject jsonObject = gson.fromJson(data, com.google.gson.JsonObject.class);
+
+                    if (jsonObject.has("pulse")) {
+                        int value = jsonObject.get("pulse").getAsInt();
+                        Log.d(TAG, "extractPulseValue: Found pulse via Gson: " + value);
+                        return value;
+                    }
+                    if (jsonObject.has("0")) {
+                        // Sometimes pulse comes as "0" field
+                        int value = jsonObject.get("0").getAsInt();
+                        Log.d(TAG, "extractPulseValue: Found pulse as '0' via Gson: " + value);
+                        return value;
+                    }
+                } catch (Exception e) {
+                    Log.d(TAG, "extractPulseValue: Gson parsing failed, trying manual parsing");
+                }
+            }
+
+            // Method 2: Manual regex parsing
+            String[] patterns = {
+                    "\"pulse\"\\s*:\\s*([0-9]+)",
+                    "\"0\"\\s*:\\s*([0-9]+)",
+                    "'pulse'\\s*:\\s*([0-9]+)",
+                    "'0'\\s*:\\s*([0-9]+)"
+            };
+
+            for (String pattern : patterns) {
+                java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+                java.util.regex.Matcher m = p.matcher(data);
+                if (m.find()) {
+                    int value = Integer.parseInt(m.group(1));
+                    Log.d(TAG, "extractPulseValue: Found pulse via regex: " + value);
+                    return value;
+                }
+            }
+
+            // Method 3: Simple string parsing as fallback
+            if (data.contains("pulse") || data.contains("\"0\"")) {
+                String[] parts = data.split("[:,}]");
+                for (int i = 0; i < parts.length - 1; i++) {
+                    if (parts[i].contains("pulse") || parts[i].contains("\"0\"")) {
+                        try {
+                            String valueStr = parts[i + 1].trim().replace("\"", "").replace("'", "");
+                            int value = Integer.parseInt(valueStr);
+                            Log.d(TAG, "extractPulseValue: Found pulse via string parsing: " + value);
+                            return value;
+                        } catch (NumberFormatException e) {
+                            Log.w(TAG, "extractPulseValue: Could not parse: " + parts[i + 1]);
+                        }
+                    }
+                }
+            }
+
+            Log.w(TAG, "extractPulseValue: No pulse value found in data: " + data);
+            return 0;
+
+        } catch (Exception e) {
+            Log.e(TAG, "extractPulseValue: Error extracting pulse value", e);
+            return 0;
         }
     }
 
