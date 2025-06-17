@@ -30,7 +30,7 @@ import java.util.Map;
 
 public class HealthDataActivity extends AppCompatActivity implements BluetoothService.BluetoothDataListener {
 
-    private TextView pulseTextView, tempTextView, humidityTextView, statusTextView;
+    private TextView pulseTextView, tempTextView, humidityTextView, ekgTextView, statusTextView;
     private FirebaseFirestore db;
     private Button saveDataButton, recommendationsButton, ecgButton;
     private HealthData currentHealthData;
@@ -44,6 +44,8 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     private static final float MIN_TEMP = 36.0f;
     private static final float MAX_HUMIDITY = 70.0f;
     private static final float MIN_HUMIDITY = 30.0f;
+    private static final float MAX_EKG = 200.0f;
+    private static final float MIN_EKG = 50.0f;
 
     // Bluetooth service
     private BluetoothService bluetoothService;
@@ -115,6 +117,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         pulseTextView = findViewById(R.id.pulseTextView);
         tempTextView = findViewById(R.id.tempTextView);
         humidityTextView = findViewById(R.id.humidityTextView);
+        ekgTextView = findViewById(R.id.ekgTextView);
         statusTextView = findViewById(R.id.statusTextView);
         recommendationsButton = findViewById(R.id.recommendationsButton);
         saveDataButton = findViewById(R.id.saveDataButton);
@@ -185,11 +188,12 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
 
     private void updateUI(HealthData data) {
         Log.d(TAG, "updateUI: Updating UI with pulse: " + data.pulse + ", temp: " + data.temperature + ", humidity: "
-                + data.humidity);
+                + data.humidity + ", ekg: " + data.ekg);
 
         pulseTextView.setText(String.format(Locale.getDefault(), "Puls: %d bpm", data.pulse));
         tempTextView.setText(String.format(Locale.getDefault(), "Temperatură: %.1f°C", data.temperature));
         humidityTextView.setText(String.format(Locale.getDefault(), "Umiditate: %.1f%%", data.humidity));
+        ekgTextView.setText(String.format(Locale.getDefault(), "EKG: %.1f mV", data.ekg));
     }
 
     private void checkThresholds(HealthData data) {
@@ -217,6 +221,14 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         } else if (data.humidity < MIN_HUMIDITY) {
             alertMessage.append("Low humidity! ");
             Log.w(TAG, "checkThresholds: Low humidity detected: " + data.humidity);
+        }
+
+        if (data.ekg > MAX_EKG) {
+            alertMessage.append("High EKG! ");
+            Log.w(TAG, "checkThresholds: High EKG detected: " + data.ekg);
+        } else if (data.ekg < MIN_EKG) {
+            alertMessage.append("Low EKG! ");
+            Log.w(TAG, "checkThresholds: Low EKG detected: " + data.ekg);
         }
 
         if (alertMessage.length() > 0) {
@@ -267,11 +279,27 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     Log.e(TAG, "saveToDatabase: Error saving humidity data", e);
                 });
 
+        // Save EKG data
+        Map<String, Object> ekgRecord = new HashMap<>();
+        ekgRecord.put("valoare", data.ekg);
+        ekgRecord.put("timestamp", timestamp);
+        ekgRecord.put("pacientID", currentUserId);
+
+        db.collection("ekg")
+                .add(ekgRecord)
+                .addOnSuccessListener(documentReference -> {
+                    Log.d(TAG, "saveToDatabase: EKG data saved with ID: " + documentReference.getId());
+                })
+                .addOnFailureListener(e -> {
+                    Log.e(TAG, "saveToDatabase: Error saving EKG data", e);
+                });
+
         // Save complete health data
         Map<String, Object> healthRecord = new HashMap<>();
         healthRecord.put("temperatura", data.temperature);
         healthRecord.put("puls", data.pulse);
         healthRecord.put("umiditate", data.humidity);
+        healthRecord.put("ekg", data.ekg);
         healthRecord.put("timestamp", timestamp);
         healthRecord.put("pacientID", currentUserId);
 
@@ -338,5 +366,6 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         int pulse;
         float temperature;
         float humidity;
+        float ekg;
     }
 }
