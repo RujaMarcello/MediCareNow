@@ -11,7 +11,9 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
@@ -55,6 +57,15 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     private BluetoothService bluetoothService;
     private boolean isBound = false;
     private boolean isBluetoothSupported = false;
+
+    // Data buffer system for rapid incoming data
+    private StringBuilder dataBuffer = new StringBuilder();
+    private Handler bufferHandler = new Handler(Looper.getMainLooper());
+    private Runnable bufferProcessor;
+    private static final int BUFFER_DELAY_MS = 50; // Process buffer every 50ms - ULTRA FAST!
+    private static final int MAX_BUFFER_SIZE = 1024; // Max buffer size in characters
+    private long lastUpdateTime = 0;
+    private static final long MIN_UPDATE_INTERVAL_MS = 50; // Minimum 50ms between UI updates - INSTANT!
 
     // Hardcoded Bluetooth device address - ARDUINO MAC ADDRESS
     private static final String ARDUINO_BLUETOOTH_ADDRESS = "58:56:00:00:2C:BE"; // Arduino MAC address
@@ -636,36 +647,149 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             return;
         }
 
-        Log.d(TAG, "onDataReceived: Received raw data from Arduino: '" + data + "'");
+        Log.d(TAG, "onDataReceived: Processing data chunk: '" + data + "' (length: " + data.length() + ")");
 
+        // TRY IMMEDIATE PARSING FIRST for instant UI updates!
         try {
-            // Clean the data - remove any non-JSON characters
-            String cleanData = data.trim();
+            String trimmedData = data.trim();
 
-            // Find JSON object in the data
-            int startIndex = cleanData.indexOf('{');
-            int endIndex = cleanData.lastIndexOf('}');
+            // Check if we have a complete JSON object
+            if (trimmedData.startsWith("{") && trimmedData.endsWith("}")) {
+                HealthData parsedData = parseArduinoData(trimmedData);
+                if (parsedData != null && isValidHealthData(parsedData)) {
+                    Log.d(TAG, "onDataReceived: INSTANT PARSE SUCCESS! Updating UI immediately");
 
-            if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
-                String jsonData = cleanData.substring(startIndex, endIndex + 1);
-                Log.d(TAG, "onDataReceived: Extracted JSON: '" + jsonData + "'");
+                    runOnUiThread(() -> {
+                        currentHealthData = parsedData;
+                        updateUI(currentHealthData);
+                        checkThresholds(currentHealthData);
+                        saveToDatabase(currentHealthData);
+                    });
 
-                // Try to parse JSON data from Arduino
-                HealthData newHealthData = parseArduinoData(jsonData);
-
-                if (newHealthData != null) {
-                    currentHealthData = newHealthData;
-                    updateUI(currentHealthData);
-                    checkThresholds(currentHealthData);
-                    Log.d(TAG, "onDataReceived: UI updated with new Arduino data");
-                } else {
-                    Log.w(TAG, "onDataReceived: Failed to parse Arduino data");
+                    lastUpdateTime = System.currentTimeMillis();
+                    return; // Exit early - we got perfect data instantly!
                 }
-            } else {
-                Log.w(TAG, "onDataReceived: No valid JSON found in data: " + cleanData);
             }
         } catch (Exception e) {
-            Log.e(TAG, "onDataReceived: Unexpected error processing data: " + data, e);
+            Log.d(TAG, "onDataReceived: Instant parsing failed, falling back to buffer: " + e.getMessage());
+        }
+
+        // FALLBACK: Use buffer system for incomplete/complex data
+        synchronized (dataBuffer) {
+            try {
+                // Add new data to buffer
+                dataBuffer.append(data);
+
+                // Check buffer size limit
+                if (dataBuffer.length() > MAX_BUFFER_SIZE) {
+                    Log.w(TAG, "onDataReceived: Buffer overflow, clearing old data");
+                    // Keep only the last half of the buffer
+                    String bufferContent = dataBuffer.toString();
+                    dataBuffer.setLength(0);
+                    dataBuffer.append(bufferContent.substring(bufferContent.length() / 2));
+                }
+
+                Log.d(TAG, "onDataReceived: Buffer size now: " + dataBuffer.length() + " characters");
+
+                // Schedule buffer processing (cancel previous if exists)
+                if (bufferProcessor != null) {
+                    bufferHandler.removeCallbacks(bufferProcessor);
+                }
+
+                bufferProcessor = new Runnable() {
+                    @Override
+                    public void run() {
+                        processDataBuffer();
+                    }
+                };
+
+                bufferHandler.postDelayed(bufferProcessor, BUFFER_DELAY_MS);
+
+            } catch (Exception e) {
+                Log.e(TAG, "onDataReceived: Error handling data buffer", e);
+            }
+        }
+    }
+
+    private void processDataBuffer() {
+        synchronized (dataBuffer) {
+            if (dataBuffer.length() == 0) {
+                Log.d(TAG, "processDataBuffer: Buffer is empty, nothing to process");
+                return;
+            }
+
+            try {
+                String bufferContent = dataBuffer.toString();
+                Log.d(TAG, "processDataBuffer: Processing buffer content: '" + bufferContent + "'");
+
+                // Clear the buffer
+                dataBuffer.setLength(0);
+
+                // Find the most recent complete JSON object
+                HealthData latestData = findLatestValidData(bufferContent);
+
+                if (latestData != null) {
+                    // Update UI immediately from buffer too!
+                    currentHealthData = latestData;
+                    updateUI(currentHealthData);
+                    checkThresholds(currentHealthData);
+                    saveToDatabase(currentHealthData);
+                    lastUpdateTime = System.currentTimeMillis();
+                    Log.d(TAG, "processDataBuffer: UI updated with latest data from buffer");
+                } else {
+                    Log.w(TAG, "processDataBuffer: No valid data found in buffer");
+                }
+
+            } catch (Exception e) {
+                Log.e(TAG, "processDataBuffer: Error processing buffer", e);
+            }
+        }
+    }
+
+    private HealthData findLatestValidData(String bufferContent) {
+        try {
+            Log.d(TAG, "findLatestValidData: Searching for JSON objects in buffer");
+
+            HealthData latestValidData = null;
+            int searchStart = 0;
+
+            // Find all JSON objects in the buffer and keep the last valid one
+            while (searchStart < bufferContent.length()) {
+                int startIndex = bufferContent.indexOf('{', searchStart);
+                if (startIndex == -1) {
+                    break; // No more JSON objects
+                }
+
+                int endIndex = bufferContent.indexOf('}', startIndex);
+                if (endIndex == -1) {
+                    break; // Incomplete JSON object
+                }
+
+                String jsonData = bufferContent.substring(startIndex, endIndex + 1);
+                Log.d(TAG, "findLatestValidData: Found JSON candidate: '" + jsonData + "'");
+
+                HealthData parsedData = parseArduinoData(jsonData);
+                if (parsedData != null) {
+                    latestValidData = parsedData;
+                    Log.d(TAG, "findLatestValidData: Valid data found, keeping as latest");
+                }
+
+                searchStart = endIndex + 1;
+            }
+
+            if (latestValidData != null) {
+                Log.d(TAG, "findLatestValidData: Returning latest valid data - Pulse: " +
+                        latestValidData.pulse + ", Temp: " + latestValidData.temperature +
+                        ", Humidity: " + latestValidData.humidity + ", EKG: " + latestValidData.ekg);
+            } else {
+                Log.w(TAG, "findLatestValidData: No valid JSON data found in buffer");
+            }
+
+            return latestValidData;
+
+        } catch (Exception e) {
+            Log.e(TAG, "findLatestValidData: Error searching for valid data", e);
+            return null;
         }
     }
 
@@ -738,6 +862,22 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             Log.e(TAG, "parseArduinoData: Unexpected error parsing data: " + jsonData, e);
             return null;
         }
+    }
+
+    private boolean isValidHealthData(HealthData data) {
+        if (data == null)
+            return false;
+
+        // Check if values are within reasonable ranges
+        boolean validPulse = data.pulse > 30 && data.pulse < 200;
+        boolean validTemp = data.temperature > 30.0f && data.temperature < 45.0f;
+        boolean validHumidity = data.humidity > 0.0f && data.humidity < 100.0f;
+        boolean validEkg = data.ekg > 0.0f && data.ekg < 300.0f;
+
+        Log.d(TAG, "isValidHealthData: Pulse:" + validPulse + " Temp:" + validTemp +
+                " Humidity:" + validHumidity + " EKG:" + validEkg);
+
+        return validPulse && validTemp && validHumidity && validEkg;
     }
 
     private HealthData parseManually(String jsonData) {
@@ -857,12 +997,25 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     protected void onDestroy() {
         super.onDestroy();
         try {
-            Log.d(TAG, "onDestroy: Cleaning up Bluetooth service connection");
+            Log.d(TAG, "onDestroy: Cleaning up resources");
+
+            // Clean up buffer system
+            if (bufferProcessor != null) {
+                bufferHandler.removeCallbacks(bufferProcessor);
+                bufferProcessor = null;
+            }
+
+            synchronized (dataBuffer) {
+                dataBuffer.setLength(0);
+            }
+
             // Unbind from the service
             if (isBound && serviceConnection != null) {
                 unbindService(serviceConnection);
                 isBound = false;
             }
+
+            Log.d(TAG, "onDestroy: Cleanup completed");
         } catch (Exception e) {
             Log.e(TAG, "onDestroy: Error during cleanup", e);
         }
