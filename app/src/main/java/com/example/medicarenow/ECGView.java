@@ -12,8 +12,8 @@ import java.util.LinkedList;
 import java.util.Queue;
 
 public class ECGView extends View {
-    private static final int MAX_POINTS = 200; // Reduced for wider spacing between points
-    private static final int SAMPLING_RATE_HZ = 200;
+    private static final int MAX_POINTS = 50; // Reduced for wider spacing between points
+    private static final int SAMPLING_RATE_HZ = 10;
 
     private Paint paint;
     private Path path;
