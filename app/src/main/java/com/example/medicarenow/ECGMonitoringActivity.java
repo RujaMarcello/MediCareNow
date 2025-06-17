@@ -97,43 +97,101 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
     public void onDataReceived(String data) {
         Log.d(TAG, "onDataReceived: Raw EKG data: " + data);
 
-        // Parse the data to extract EKG value
+        // Parse the data to extract EKG value using multiple methods
         try {
+            float ekgValue = extractEKGValue(data);
+
+            if (ekgValue > 0) {
+                Log.d(TAG, "onDataReceived: Successfully extracted EKG value: " + ekgValue);
+
+                runOnUiThread(() -> {
+                    // Add the EKG value to the graph
+                    ecgView.addRealEKGValue(ekgValue);
+
+                    // Calculate heart rate from EKG data
+                    int calculatedHR = calculateHeartRateFromEKG(ekgValue);
+                    if (calculatedHR > 0) {
+                        currentHeartRate = calculatedHR;
+                        hasRealHeartRate = true;
+                        heartRateText.setText("Heart Rate: " + currentHeartRate + " BPM (Real-time)");
+                        ecgView.setHeartRate(currentHeartRate);
+                    } else {
+                        // EKG value too low/invalid - show that we can't calculate HR
+                        heartRateText.setText("Heart Rate: -- BPM (EKG too low)");
+                    }
+                });
+            } else {
+                Log.w(TAG, "onDataReceived: Could not extract valid EKG value from: " + data);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "onDataReceived: Error processing EKG data", e);
+        }
+    }
+
+    private float extractEKGValue(String data) {
+        try {
+            // Method 1: Try using Gson for proper JSON parsing
             if (data.contains("{") && data.contains("}")) {
-                // Try to extract EKG value from JSON
-                if (data.contains("\"ekg\"") || data.contains("\"ecg\"")) {
-                    String[] parts = data.split("[:,}]");
-                    for (int i = 0; i < parts.length - 1; i++) {
-                        if (parts[i].contains("ekg") || parts[i].contains("ecg")) {
-                            try {
-                                float ekgValue = Float.parseFloat(parts[i + 1].trim().replace("\"", ""));
-                                Log.d(TAG, "onDataReceived: Extracted EKG value: " + ekgValue);
+                try {
+                    com.google.gson.Gson gson = new com.google.gson.Gson();
+                    com.google.gson.JsonObject jsonObject = gson.fromJson(data, com.google.gson.JsonObject.class);
 
-                                runOnUiThread(() -> {
-                                    ecgView.addRealEKGValue(ekgValue);
+                    if (jsonObject.has("ekg")) {
+                        float value = jsonObject.get("ekg").getAsFloat();
+                        Log.d(TAG, "extractEKGValue: Found EKG via Gson: " + value);
+                        return value;
+                    }
+                    if (jsonObject.has("ecg")) {
+                        float value = jsonObject.get("ecg").getAsFloat();
+                        Log.d(TAG, "extractEKGValue: Found ECG via Gson: " + value);
+                        return value;
+                    }
+                } catch (Exception e) {
+                    Log.d(TAG, "extractEKGValue: Gson parsing failed, trying manual parsing");
+                }
+            }
 
-                                    // Calculate heart rate from EKG data
-                                    int calculatedHR = calculateHeartRateFromEKG(ekgValue);
-                                    if (calculatedHR > 0) {
-                                        currentHeartRate = calculatedHR;
-                                        hasRealHeartRate = true;
-                                        heartRateText.setText("Heart Rate: " + currentHeartRate + " BPM (Real-time)");
-                                        ecgView.setHeartRate(currentHeartRate);
-                                    } else {
-                                        // EKG value too low/invalid - show that we can't calculate HR
-                                        heartRateText.setText("Heart Rate: -- BPM (EKG too low)");
-                                    }
-                                });
-                                break;
-                            } catch (NumberFormatException e) {
-                                Log.w(TAG, "onDataReceived: Could not parse EKG value: " + parts[i + 1]);
-                            }
+            // Method 2: Manual regex parsing
+            String[] patterns = {
+                    "\"ekg\"\\s*:\\s*([0-9]+\\.?[0-9]*)",
+                    "\"ecg\"\\s*:\\s*([0-9]+\\.?[0-9]*)",
+                    "'ekg'\\s*:\\s*([0-9]+\\.?[0-9]*)",
+                    "'ecg'\\s*:\\s*([0-9]+\\.?[0-9]*)"
+            };
+
+            for (String pattern : patterns) {
+                java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+                java.util.regex.Matcher m = p.matcher(data);
+                if (m.find()) {
+                    float value = Float.parseFloat(m.group(1));
+                    Log.d(TAG, "extractEKGValue: Found EKG via regex: " + value);
+                    return value;
+                }
+            }
+
+            // Method 3: Simple string parsing as fallback
+            if (data.contains("ekg") || data.contains("ecg")) {
+                String[] parts = data.split("[:,}]");
+                for (int i = 0; i < parts.length - 1; i++) {
+                    if (parts[i].contains("ekg") || parts[i].contains("ecg")) {
+                        try {
+                            String valueStr = parts[i + 1].trim().replace("\"", "").replace("'", "");
+                            float value = Float.parseFloat(valueStr);
+                            Log.d(TAG, "extractEKGValue: Found EKG via string parsing: " + value);
+                            return value;
+                        } catch (NumberFormatException e) {
+                            Log.w(TAG, "extractEKGValue: Could not parse: " + parts[i + 1]);
                         }
                     }
                 }
             }
+
+            Log.w(TAG, "extractEKGValue: No EKG value found in data: " + data);
+            return 0f;
+
         } catch (Exception e) {
-            Log.e(TAG, "onDataReceived: Error processing EKG data", e);
+            Log.e(TAG, "extractEKGValue: Error extracting EKG value", e);
+            return 0f;
         }
     }
 

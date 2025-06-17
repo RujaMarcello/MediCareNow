@@ -52,23 +52,31 @@ public class ECGView extends View {
 
     // Method to add real EKG data
     public void addRealEKGValue(float ekgValue) {
+        android.util.Log.d("ECGView", "addRealEKGValue: Adding EKG value: " + ekgValue);
+
         hasRealData = true;
         lastRealEkgValue = ekgValue;
 
         // Normalize EKG value to display range (-1 to 1)
         float normalizedValue = normalizeEKGValue(ekgValue);
+        android.util.Log.d("ECGView", "addRealEKGValue: Normalized value: " + normalizedValue);
 
-        // Add to data queue
+        // Add to data queue (shift the wave to the left)
         ecgData.poll();
         ecgData.add(normalizedValue);
 
-        // Trigger redraw
+        // NO ANIMATION - just add the real data point
+
+        // Trigger immediate redraw
         invalidate();
     }
 
     // Method to reset to flat line when no data available
     public void resetToFlatLine() {
+        android.util.Log.d("ECGView", "resetToFlatLine: Resetting to flat line");
+
         hasRealData = false;
+        // No animation to stop - we never animate
 
         // Fill queue with flat line values
         ecgData.clear();
@@ -83,6 +91,11 @@ public class ECGView extends View {
     public boolean hasRealData() {
         return hasRealData;
     }
+
+    // NO ANIMATION - Only real data points, no random generation!
+    // ECGView will only update when real data is received via addRealEKGValue()
+
+    // No animation methods needed - we only use real data
 
     // Normalize EKG values to display range
     private float normalizeEKGValue(float rawValue) {
@@ -107,16 +120,17 @@ public class ECGView extends View {
         float scale = height * 0.4f;
         float pixelsPerPoint = width / MAX_POINTS;
 
-        // NEVER generate simulated data - only use real data or flat line
-        // If we don't have real data, the queue already contains flat line values
-        // The addRealEKGValue method handles adding real data points
-
         // Draw the path
         path.reset();
         int i = 0;
+        float minY = Float.MAX_VALUE, maxY = Float.MIN_VALUE;
+
         for (Float point : ecgData) {
             float x = i * pixelsPerPoint;
             float y = centerY - (point * scale);
+
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y);
 
             if (i == 0) {
                 path.moveTo(x, y);
@@ -128,37 +142,12 @@ public class ECGView extends View {
 
         canvas.drawPath(path, paint);
 
-        // No auto-refresh - only update when real data arrives
-        // This keeps the flat line static when no data is available
+        // Debug logging occasionally
+        if (hasRealData && System.currentTimeMillis() % 1000 < 50) {
+            android.util.Log.d("ECGView",
+                    "onDraw: Drawing " + ecgData.size() + " points, Y range: " + minY + " to " + maxY);
+        }
     }
 
-    private float generateECGPoint(int sampleInBeat) {
-        float t = (float) sampleInBeat / samplesPerBeat;
-
-        // ECG waveform components
-        float pWave = 0, qrsComplex = 0, tWave = 0;
-
-        // P Wave
-        if (t >= 0.1 && t <= 0.2) {
-            pWave = (float) (0.25 * Math.sin(Math.PI * (t - 0.1) / 0.1));
-        }
-
-        // QRS Complex
-        if (t >= 0.25 && t <= 0.35) {
-            if (t <= 0.27) {
-                qrsComplex = -0.5f * (t - 0.25f) / 0.02f;
-            } else if (t <= 0.30) {
-                qrsComplex = 1.0f - 2.5f * (t - 0.27f);
-            } else {
-                qrsComplex = -0.3f + 3.0f * (t - 0.30f) / 0.05f;
-            }
-        }
-
-        // T Wave
-        if (t >= 0.4 && t <= 0.6) {
-            tWave = (float) (0.3 * Math.sin(Math.PI * (t - 0.4) / 0.2));
-        }
-
-        return pWave + qrsComplex + tWave + 0.05f * (float) Math.sin(2 * Math.PI * t * 5);
-    }
+    // NO SIMULATION METHODS - Only real data from Arduino!
 }
