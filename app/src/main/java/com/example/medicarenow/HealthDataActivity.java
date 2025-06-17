@@ -105,6 +105,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
 
         try {
             setContentView(R.layout.activity_health_data);
+            Log.d(TAG, "onCreate: Layout set successfully");
 
             db = FirebaseFirestore.getInstance();
             Log.d(TAG, "onCreate: Firestore instance initialized");
@@ -124,18 +125,24 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                 return;
             }
 
-            // Initialize UI elements
+            // Initialize UI elements FIRST
             initializeUI();
+            Log.d(TAG, "onCreate: UI initialized successfully");
 
             // Check if Bluetooth is supported
             checkBluetoothSupport();
+            Log.d(TAG, "onCreate: Bluetooth support check completed. Supported: " + isBluetoothSupported);
+
+            // Always show demo data initially
+            Log.d(TAG, "onCreate: Showing initial demo data");
+            showDummyData();
 
             // Start and bind to BluetoothService only if Bluetooth is supported
             if (isBluetoothSupported) {
+                Log.d(TAG, "onCreate: Starting Bluetooth service");
                 startBluetoothService();
             } else {
-                // Show dummy data if Bluetooth is not supported
-                showDummyData();
+                Log.d(TAG, "onCreate: Bluetooth not supported, staying in demo mode");
             }
 
             Log.d(TAG, "onCreate: HealthDataActivity initialized successfully");
@@ -143,38 +150,65 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         } catch (Exception e) {
             Log.e(TAG, "onCreate: Critical error during initialization", e);
             Toast.makeText(this, "Error initializing app: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            finish();
+            // Don't finish, try to show demo data
+            try {
+                initializeUI();
+                showDummyData();
+            } catch (Exception e2) {
+                Log.e(TAG, "onCreate: Failed to show demo data", e2);
+                finish();
+            }
         }
     }
 
     private void checkBluetoothSupport() {
         try {
+            Log.d(TAG, "checkBluetoothSupport: Checking Bluetooth support");
             BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
             isBluetoothSupported = bluetoothAdapter != null;
 
+            Log.d(TAG, "checkBluetoothSupport: BluetoothAdapter: " + (bluetoothAdapter != null ? "Available" : "NULL"));
+
             if (!isBluetoothSupported) {
                 Log.w(TAG, "checkBluetoothSupport: Bluetooth not supported on this device");
-                statusTextView.setText("Status: Bluetooth not supported - using demo mode");
+                updateStatus("Status: Bluetooth not supported - using demo mode");
             } else {
                 Log.d(TAG, "checkBluetoothSupport: Bluetooth is supported");
+                Log.d(TAG, "checkBluetoothSupport: Bluetooth enabled: " + bluetoothAdapter.isEnabled());
+                updateStatus("Status: Bluetooth available - attempting connection");
             }
         } catch (Exception e) {
             Log.e(TAG, "checkBluetoothSupport: Error checking Bluetooth support", e);
             isBluetoothSupported = false;
-            statusTextView.setText("Status: Bluetooth check failed - using demo mode");
+            updateStatus("Status: Bluetooth check failed - using demo mode");
         }
     }
 
+    private void updateStatus(String status) {
+        Log.d(TAG, "updateStatus: " + status);
+        runOnUiThread(() -> {
+            if (statusTextView != null) {
+                statusTextView.setText(status);
+            } else {
+                Log.w(TAG, "updateStatus: statusTextView is null");
+            }
+        });
+    }
+
     private boolean checkBluetoothPermissions() {
+        boolean hasPermissions;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            return ContextCompat.checkSelfPermission(this,
+            hasPermissions = ContextCompat.checkSelfPermission(this,
                     Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
                     ContextCompat.checkSelfPermission(this,
                             Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+            Log.d(TAG, "checkBluetoothPermissions: Android 12+ permissions check: " + hasPermissions);
         } else {
-            return ContextCompat.checkSelfPermission(this,
+            hasPermissions = ContextCompat.checkSelfPermission(this,
                     Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+            Log.d(TAG, "checkBluetoothPermissions: Legacy permissions check: " + hasPermissions);
         }
+        return hasPermissions;
     }
 
     private void requestBluetoothPermissions() {
@@ -193,22 +227,26 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 
+        Log.d(TAG, "onRequestPermissionsResult: Request code: " + requestCode);
+
         if (requestCode == BLUETOOTH_PERMISSION_REQUEST_CODE) {
             boolean allPermissionsGranted = true;
-            for (int result : grantResults) {
-                if (result != PackageManager.PERMISSION_GRANTED) {
+            for (int i = 0; i < grantResults.length; i++) {
+                Log.d(TAG, "onRequestPermissionsResult: Permission " + permissions[i] + " = " +
+                        (grantResults[i] == PackageManager.PERMISSION_GRANTED ? "GRANTED" : "DENIED"));
+                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                     allPermissionsGranted = false;
-                    break;
                 }
             }
 
             if (allPermissionsGranted) {
-                Log.d(TAG, "onRequestPermissionsResult: Bluetooth permissions granted");
+                Log.d(TAG, "onRequestPermissionsResult: All Bluetooth permissions granted");
+                updateStatus("Status: Permissions granted - connecting to Arduino");
                 connectToArduinoDevice();
             } else {
-                Log.w(TAG, "onRequestPermissionsResult: Bluetooth permissions denied");
-                statusTextView.setText("Status: Bluetooth permissions denied - using demo mode");
-                showDummyData();
+                Log.w(TAG, "onRequestPermissionsResult: Some Bluetooth permissions denied");
+                updateStatus("Status: Bluetooth permissions denied - using demo mode");
+                // Demo data is already shown, just update status
             }
         }
     }
@@ -218,29 +256,40 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             Log.d(TAG, "startBluetoothService: Starting Bluetooth service");
             Intent bluetoothIntent = new Intent(this, BluetoothService.class);
             startService(bluetoothIntent);
-            bindService(bluetoothIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+            boolean bindResult = bindService(bluetoothIntent, serviceConnection, Context.BIND_AUTO_CREATE);
+            Log.d(TAG, "startBluetoothService: Bind service result: " + bindResult);
         } catch (Exception e) {
             Log.e(TAG, "startBluetoothService: Error starting Bluetooth service", e);
-            statusTextView.setText("Status: Bluetooth service error - using demo mode");
-            showDummyData();
+            updateStatus("Status: Bluetooth service error - using demo mode");
         }
     }
 
     private void showDummyData() {
-        Log.d(TAG, "showDummyData: Showing dummy health data");
+        Log.d(TAG, "showDummyData: Creating and displaying dummy health data");
 
-        currentHealthData = new HealthData();
-        currentHealthData.pulse = 75;
-        currentHealthData.temperature = 36.8f;
-        currentHealthData.humidity = 45.2f;
-        currentHealthData.ekg = 120.5f;
+        try {
+            currentHealthData = new HealthData();
+            currentHealthData.pulse = 75;
+            currentHealthData.temperature = 36.8f;
+            currentHealthData.humidity = 45.2f;
+            currentHealthData.ekg = 120.5f;
 
-        updateUI(currentHealthData);
-        statusTextView.setText("Status: Demo mode - using sample data");
+            Log.d(TAG, "showDummyData: Created dummy data - Pulse: " + currentHealthData.pulse +
+                    ", Temp: " + currentHealthData.temperature + ", Humidity: " + currentHealthData.humidity +
+                    ", EKG: " + currentHealthData.ekg);
+
+            updateUI(currentHealthData);
+            updateStatus("Status: Demo mode - using sample data");
+
+            Log.d(TAG, "showDummyData: Dummy data displayed successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "showDummyData: Error creating dummy data", e);
+            updateStatus("Status: Error creating demo data");
+        }
     }
 
     private void initializeUI() {
-        Log.d(TAG, "initializeUI: Initializing UI elements");
+        Log.d(TAG, "initializeUI: Starting UI initialization");
 
         try {
             pulseTextView = findViewById(R.id.pulseTextView);
@@ -252,53 +301,82 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             saveDataButton = findViewById(R.id.saveDataButton);
             ecgButton = findViewById(R.id.ecgButton);
 
-            // Set initial status
-            statusTextView.setText("Status: Initializing...");
+            // Log which views were found
+            Log.d(TAG, "initializeUI: View initialization results:");
+            Log.d(TAG, "  - pulseTextView: " + (pulseTextView != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - tempTextView: " + (tempTextView != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - humidityTextView: " + (humidityTextView != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - ekgTextView: " + (ekgTextView != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - statusTextView: " + (statusTextView != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - saveDataButton: " + (saveDataButton != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - ecgButton: " + (ecgButton != null ? "OK" : "NULL"));
+            Log.d(TAG, "  - recommendationsButton: " + (recommendationsButton != null ? "OK" : "NULL"));
+
+            // Set initial values
+            if (pulseTextView != null)
+                pulseTextView.setText("Puls: -- bpm");
+            if (tempTextView != null)
+                tempTextView.setText("Temperatură: --°C");
+            if (humidityTextView != null)
+                humidityTextView.setText("Umiditate: --%");
+            if (ekgTextView != null)
+                ekgTextView.setText("EKG: -- mV");
+
+            updateStatus("Status: Initializing...");
 
             // Initialize save button
-            saveDataButton.setOnClickListener(v -> {
-                Log.d(TAG, "Save data button clicked");
-                try {
-                    if (currentHealthData != null) {
-                        saveToDatabase(currentHealthData);
-                        Toast.makeText(this, "Data saved successfully", Toast.LENGTH_SHORT).show();
-                    } else {
-                        Log.w(TAG, "No data to save");
-                        Toast.makeText(this, "No data to save", Toast.LENGTH_SHORT).show();
+            if (saveDataButton != null) {
+                saveDataButton.setOnClickListener(v -> {
+                    Log.d(TAG, "Save data button clicked");
+                    try {
+                        if (currentHealthData != null) {
+                            Log.d(TAG, "Saving current health data: " + currentHealthData.pulse + ", " +
+                                    currentHealthData.temperature + ", " + currentHealthData.humidity + ", "
+                                    + currentHealthData.ekg);
+                            saveToDatabase(currentHealthData);
+                            Toast.makeText(this, "Data saved successfully", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Log.w(TAG, "No data to save - currentHealthData is null");
+                            Toast.makeText(this, "No data to save", Toast.LENGTH_SHORT).show();
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error saving data", e);
+                        Toast.makeText(this, "Error saving data: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                     }
-                } catch (Exception e) {
-                    Log.e(TAG, "Error saving data", e);
-                    Toast.makeText(this, "Error saving data: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                }
-            });
+                });
+            }
 
-            ecgButton.setOnClickListener(v -> {
-                Log.d(TAG, "ECG button clicked");
-                try {
-                    Intent intent = new Intent(HealthDataActivity.this, ECGMonitoringActivity.class);
-                    startActivity(intent);
-                } catch (Exception e) {
-                    Log.e(TAG, "Error opening ECG activity", e);
-                    Toast.makeText(this, "Error opening ECG monitor", Toast.LENGTH_SHORT).show();
-                }
-            });
+            if (ecgButton != null) {
+                ecgButton.setOnClickListener(v -> {
+                    Log.d(TAG, "ECG button clicked");
+                    try {
+                        Intent intent = new Intent(HealthDataActivity.this, ECGMonitoringActivity.class);
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error opening ECG activity", e);
+                        Toast.makeText(this, "Error opening ECG monitor", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
 
-            recommendationsButton.setOnClickListener(v -> {
-                Log.d(TAG, "Recommendations button clicked");
-                try {
-                    Intent intent = new Intent(HealthDataActivity.this, RecommendationsActivity.class);
-                    startActivity(intent);
-                } catch (Exception e) {
-                    Log.e(TAG, "Error opening recommendations activity", e);
-                    Toast.makeText(this, "Error opening recommendations", Toast.LENGTH_SHORT).show();
-                }
-            });
+            if (recommendationsButton != null) {
+                recommendationsButton.setOnClickListener(v -> {
+                    Log.d(TAG, "Recommendations button clicked");
+                    try {
+                        Intent intent = new Intent(HealthDataActivity.this, RecommendationsActivity.class);
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error opening recommendations activity", e);
+                        Toast.makeText(this, "Error opening recommendations", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }
 
             Log.d(TAG, "initializeUI: UI elements initialized successfully");
 
         } catch (Exception e) {
             Log.e(TAG, "initializeUI: Error initializing UI", e);
-            Toast.makeText(this, "UI initialization error", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "UI initialization error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -357,26 +435,48 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         }
 
         try {
-            Log.d(TAG,
-                    "updateUI: Updating UI with pulse: " + data.pulse + ", temp: " + data.temperature + ", humidity: "
-                            + data.humidity + ", ekg: " + data.ekg);
+            Log.d(TAG, "updateUI: Starting UI update");
+            Log.d(TAG, "updateUI: Data values - Pulse: " + data.pulse + ", Temp: " + data.temperature +
+                    ", Humidity: " + data.humidity + ", EKG: " + data.ekg);
+            Log.d(TAG, "updateUI: UI Views status - Pulse: " + (pulseTextView != null) +
+                    ", Temp: " + (tempTextView != null) + ", Humidity: " + (humidityTextView != null) +
+                    ", EKG: " + (ekgTextView != null));
 
             runOnUiThread(() -> {
                 try {
                     if (pulseTextView != null) {
-                        pulseTextView.setText(String.format(Locale.getDefault(), "Puls: %d bpm", data.pulse));
+                        String pulseText = String.format(Locale.getDefault(), "Puls: %d bpm", data.pulse);
+                        pulseTextView.setText(pulseText);
+                        Log.d(TAG, "updateUI: Set pulse text: " + pulseText);
+                    } else {
+                        Log.w(TAG, "updateUI: pulseTextView is null");
                     }
+
                     if (tempTextView != null) {
-                        tempTextView
-                                .setText(String.format(Locale.getDefault(), "Temperatură: %.1f°C", data.temperature));
+                        String tempText = String.format(Locale.getDefault(), "Temperatură: %.1f°C", data.temperature);
+                        tempTextView.setText(tempText);
+                        Log.d(TAG, "updateUI: Set temperature text: " + tempText);
+                    } else {
+                        Log.w(TAG, "updateUI: tempTextView is null");
                     }
+
                     if (humidityTextView != null) {
-                        humidityTextView
-                                .setText(String.format(Locale.getDefault(), "Umiditate: %.1f%%", data.humidity));
+                        String humidityText = String.format(Locale.getDefault(), "Umiditate: %.1f%%", data.humidity);
+                        humidityTextView.setText(humidityText);
+                        Log.d(TAG, "updateUI: Set humidity text: " + humidityText);
+                    } else {
+                        Log.w(TAG, "updateUI: humidityTextView is null");
                     }
+
                     if (ekgTextView != null) {
-                        ekgTextView.setText(String.format(Locale.getDefault(), "EKG: %.1f mV", data.ekg));
+                        String ekgText = String.format(Locale.getDefault(), "EKG: %.1f mV", data.ekg);
+                        ekgTextView.setText(ekgText);
+                        Log.d(TAG, "updateUI: Set EKG text: " + ekgText);
+                    } else {
+                        Log.w(TAG, "updateUI: ekgTextView is null");
                     }
+
+                    Log.d(TAG, "updateUI: All UI elements updated successfully");
                 } catch (Exception e) {
                     Log.e(TAG, "updateUI: Error updating UI elements", e);
                 }
