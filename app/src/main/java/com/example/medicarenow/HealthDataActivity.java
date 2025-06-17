@@ -1,16 +1,26 @@
 package com.example.medicarenow;
 
+import android.Manifest;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.IBinder;
 import android.util.Log;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.annotation.RequiresPermission;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.google.firebase.firestore.FirebaseFirestore;
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -18,7 +28,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-public class HealthDataActivity extends AppCompatActivity {
+public class HealthDataActivity extends AppCompatActivity implements BluetoothService.BluetoothDataListener {
 
     private TextView pulseTextView, tempTextView, humidityTextView, statusTextView;
     private FirebaseFirestore db;
@@ -26,6 +36,42 @@ public class HealthDataActivity extends AppCompatActivity {
     private HealthData currentHealthData;
     private String currentUserId;
     private static final String TAG = "HealthDataActivity";
+
+    // Threshold values for alerts
+    private static final int MAX_PULSE = 100;
+    private static final int MIN_PULSE = 60;
+    private static final float MAX_TEMP = 37.5f;
+    private static final float MIN_TEMP = 36.0f;
+    private static final float MAX_HUMIDITY = 70.0f;
+    private static final float MIN_HUMIDITY = 30.0f;
+
+    // Bluetooth service
+    private BluetoothService bluetoothService;
+    private boolean isBound = false;
+
+    // Hardcoded Bluetooth device address - ARDUINO MAC ADDRESS
+    private static final String ARDUINO_BLUETOOTH_ADDRESS = "58:56:00:00:2C:BE"; // Arduino MAC address
+
+    private ServiceConnection serviceConnection = new ServiceConnection() {
+        @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            Log.d(TAG, "onServiceConnected: Bluetooth service connected");
+            BluetoothService.LocalBinder binder = (BluetoothService.LocalBinder) service;
+            bluetoothService = binder.getService();
+            bluetoothService.setDataListener(HealthDataActivity.this);
+            isBound = true;
+
+            // Connect to the Arduino device
+            connectToArduinoDevice();
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            Log.d(TAG, "onServiceDisconnected: Bluetooth service disconnected");
+            isBound = false;
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,8 +100,11 @@ public class HealthDataActivity extends AppCompatActivity {
         // Initialize UI elements
         initializeUI();
 
-        // Create some dummy data for testing
-        createDummyData();
+        // Start and bind to BluetoothService
+        Log.d(TAG, "onCreate: Starting Bluetooth service");
+        Intent bluetoothIntent = new Intent(this, BluetoothService.class);
+        startService(bluetoothIntent);
+        bindService(bluetoothIntent, serviceConnection, Context.BIND_AUTO_CREATE);
 
         Log.d(TAG, "onCreate: HealthDataActivity initialized successfully");
     }
@@ -72,7 +121,7 @@ public class HealthDataActivity extends AppCompatActivity {
         ecgButton = findViewById(R.id.ecgButton);
 
         // Set initial status
-        statusTextView.setText("Status: Ready for data input");
+        statusTextView.setText("Status: Initializing Bluetooth connection...");
 
         // Initialize save button
         saveDataButton.setOnClickListener(v -> {
@@ -101,19 +150,37 @@ public class HealthDataActivity extends AppCompatActivity {
         Log.d(TAG, "initializeUI: UI elements initialized successfully");
     }
 
-    private void createDummyData() {
-        Log.d(TAG, "createDummyData: Creating sample health data");
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    private void connectToArduinoDevice() {
+        Log.d(TAG, "connectToArduinoDevice: Attempting to connect to Arduino: " + ARDUINO_BLUETOOTH_ADDRESS);
 
-        // Create dummy health data for testing
-        currentHealthData = new HealthData();
-        currentHealthData.pulse = 75;
-        currentHealthData.temperature = 36.8f;
-        currentHealthData.humidity = 45.2f;
+        BluetoothAdapter bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+        if (bluetoothAdapter == null) {
+            Log.e(TAG, "connectToArduinoDevice: Bluetooth not supported");
+            statusTextView.setText("Status: Bluetooth not supported");
+            return;
+        }
 
-        updateUI(currentHealthData);
-        checkThresholds(currentHealthData);
+        if (!bluetoothAdapter.isEnabled()) {
+            Log.w(TAG, "connectToArduinoDevice: Bluetooth not enabled");
+            statusTextView.setText("Status: Please enable Bluetooth");
+            return;
+        }
 
-        Log.d(TAG, "createDummyData: Dummy data created and UI updated");
+        try {
+            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(ARDUINO_BLUETOOTH_ADDRESS);
+            if (device != null && bluetoothService != null) {
+                Log.d(TAG, "connectToArduinoDevice: Connecting to device: " + device.getName());
+                bluetoothService.connectToDevice(device);
+                statusTextView.setText("Status: Connecting to Arduino...");
+            } else {
+                Log.e(TAG, "connectToArduinoDevice: Device not found or service not available");
+                statusTextView.setText("Status: Arduino device not found");
+            }
+        } catch (IllegalArgumentException e) {
+            Log.e(TAG, "connectToArduinoDevice: Invalid MAC address: " + ARDUINO_BLUETOOTH_ADDRESS, e);
+            statusTextView.setText("Status: Invalid Arduino MAC address");
+        }
     }
 
     private void updateUI(HealthData data) {
@@ -126,14 +193,6 @@ public class HealthDataActivity extends AppCompatActivity {
     }
 
     private void checkThresholds(HealthData data) {
-        // Threshold values for alerts
-        int MAX_PULSE = 100;
-        int MIN_PULSE = 60;
-        float MAX_TEMP = 37.5f;
-        float MIN_TEMP = 36.0f;
-        float MAX_HUMIDITY = 70.0f;
-        float MIN_HUMIDITY = 30.0f;
-
         StringBuilder alertMessage = new StringBuilder();
 
         if (data.pulse > MAX_PULSE) {
@@ -165,7 +224,7 @@ public class HealthDataActivity extends AppCompatActivity {
             statusTextView.setText("ALERT: " + alertMessage.toString());
             Log.i(TAG, "checkThresholds: Alert triggered: " + alertMessage.toString());
         } else {
-            statusTextView.setText("Status: All values normal");
+            statusTextView.setText("Status: All values normal - Connected to Arduino");
         }
     }
 
@@ -226,6 +285,55 @@ public class HealthDataActivity extends AppCompatActivity {
                 });
     }
 
+    // BLUETOOTH DATA LISTENER METHODS
+    @Override
+    public void onDataReceived(String data) {
+        Log.d(TAG, "onDataReceived: Received data from Arduino: " + data);
+        try {
+            // Try to parse JSON data from Arduino
+            currentHealthData = new Gson().fromJson(data, HealthData.class);
+            runOnUiThread(() -> {
+                updateUI(currentHealthData);
+                checkThresholds(currentHealthData);
+                Log.d(TAG, "onDataReceived: UI updated with new Arduino data");
+            });
+        } catch (JsonSyntaxException e) {
+            Log.e(TAG, "onDataReceived: JSON parsing error for data: " + data, e);
+            runOnUiThread(() -> statusTextView.setText("Status: Data format error from Arduino"));
+        }
+    }
+
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
+    @Override
+    public void onConnectionStatusChanged(boolean isConnected) {
+        Log.d(TAG, "onConnectionStatusChanged: Connection status changed to: " + isConnected);
+        runOnUiThread(() -> {
+            if (isConnected) {
+                statusTextView.setText("Status: Connected to Arduino device");
+                Log.i(TAG, "onConnectionStatusChanged: Successfully connected to Arduino");
+            } else {
+                statusTextView.setText("Status: Disconnected - attempting to reconnect");
+                Log.w(TAG, "onConnectionStatusChanged: Disconnected from Arduino, attempting reconnect");
+                // Attempt to reconnect
+                if (bluetoothService != null) {
+                    connectToArduinoDevice();
+                }
+            }
+        });
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        Log.d(TAG, "onDestroy: Cleaning up Bluetooth service connection");
+        // Unbind from the service
+        if (isBound) {
+            unbindService(serviceConnection);
+            isBound = false;
+        }
+    }
+
+    // Data model class for Arduino JSON data
     private static class HealthData {
         int pulse;
         float temperature;
