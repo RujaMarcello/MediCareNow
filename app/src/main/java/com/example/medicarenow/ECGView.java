@@ -32,7 +32,7 @@ public class ECGView extends View {
     private void init() {
         paint = new Paint();
         paint.setColor(Color.GREEN);
-        paint.setStrokeWidth(4f);
+        paint.setStrokeWidth(6f); // Thicker line for better visibility
         paint.setStyle(Paint.Style.STROKE);
         paint.setAntiAlias(true);
 
@@ -99,15 +99,26 @@ public class ECGView extends View {
 
     // Normalize EKG values to display range
     private float normalizeEKGValue(float rawValue) {
-        // Assuming EKG values are in range 50-200, normalize to -1 to 1
-        float minEKG = 50f;
-        float maxEKG = 200f;
+        // Updated for values around 300 - wider range and better scaling
+        float minEKG = 200f; // Lower bound for ~300 values
+        float maxEKG = 400f; // Upper bound for ~300 values
 
-        // Clamp value to expected range
-        float clampedValue = Math.max(minEKG, Math.min(maxEKG, rawValue));
+        // Center value around 300
+        float centerValue = 300f;
 
-        // Normalize to -1 to 1 range
-        return ((clampedValue - minEKG) / (maxEKG - minEKG)) * 2f - 1f;
+        // Create variation around the center value
+        float deviation = rawValue - centerValue;
+
+        // Scale the deviation to make it more visible (-2 to +2 range for wider graph)
+        float scaledDeviation = (deviation / 50f); // Divide by 50 to get good range
+
+        // Clamp to reasonable display range
+        float normalizedValue = Math.max(-2f, Math.min(2f, scaledDeviation));
+
+        android.util.Log.d("ECGView", "normalizeEKGValue: Raw=" + rawValue +
+                ", Deviation=" + deviation + ", Normalized=" + normalizedValue);
+
+        return normalizedValue;
     }
 
     @Override
@@ -117,7 +128,7 @@ public class ECGView extends View {
         float width = getWidth();
         float height = getHeight();
         float centerY = height / 2;
-        float scale = height * 0.4f;
+        float scale = height * 0.3f; // Increased scale for wider amplitude
         float pixelsPerPoint = width / MAX_POINTS;
 
         // Draw the path
