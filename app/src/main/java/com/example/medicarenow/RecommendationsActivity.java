@@ -14,13 +14,16 @@ import com.google.firebase.firestore.QueryDocumentSnapshot;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 
 public class RecommendationsActivity extends AppCompatActivity {
 
     private TextView recommendationsText;
     private FirebaseFirestore db;
     private String currentUserId;
+    private String currentUserEmail;
     private static final String TAG = "RecommendationsActivity";
 
     @Override
@@ -35,9 +38,15 @@ public class RecommendationsActivity extends AppCompatActivity {
         // Check user session
         SharedPreferences prefs = getSharedPreferences("MediCareNow", MODE_PRIVATE);
         currentUserId = prefs.getString("user_id", "");
-        String userEmail = prefs.getString("user_email", "");
+        currentUserEmail = prefs.getString("user_email", "");
+        String firstName = prefs.getString("user_first_name", "");
+        String lastName = prefs.getString("user_last_name", "");
 
-        Log.d(TAG, "onCreate: Current user ID: " + currentUserId + ", email: " + userEmail);
+        Log.d(TAG, "onCreate: Session data:");
+        Log.d(TAG, "  - user_id: " + currentUserId);
+        Log.d(TAG, "  - email: " + currentUserEmail);
+        Log.d(TAG, "  - firstName: " + firstName);
+        Log.d(TAG, "  - lastName: " + lastName);
 
         if (currentUserId.isEmpty()) {
             Log.w(TAG, "onCreate: No user session found, redirecting to login");
@@ -53,8 +62,10 @@ public class RecommendationsActivity extends AppCompatActivity {
     }
 
     private void loadMedicalRecommendations() {
-        Log.d(TAG, "loadMedicalRecommendations: Loading recommendations for user: " + currentUserId);
-        recommendationsText.setText("Se încarcă recomandările medicale...");
+        Log.d(TAG, "loadMedicalRecommendations: Starting to load recommendations");
+        Log.d(TAG, "loadMedicalRecommendations: Searching for pacientID = " + currentUserId);
+        recommendationsText.setText(
+                "🔍 Se caută recomandările medicale...\n\nUser ID: " + currentUserId + "\nEmail: " + currentUserEmail);
 
         // Query Firestore for recommendations assigned to current user
         db.collection("recomandari")
@@ -63,112 +74,17 @@ public class RecommendationsActivity extends AppCompatActivity {
                 .addOnCompleteListener(task -> {
                     if (task.isSuccessful()) {
                         Log.d(TAG, "loadMedicalRecommendations: Query successful, found " + task.getResult().size()
-                                + " recommendations");
+                                + " recommendations for user");
 
                         if (task.getResult().isEmpty()) {
-                            Log.w(TAG, "loadMedicalRecommendations: No recommendations found for user");
-                            showLocalRecommendations();
+                            Log.w(TAG, "loadMedicalRecommendations: No recommendations found for pacientID: "
+                                    + currentUserId);
+                            // Show message that no recommendations exist for this user
+                            showNoRecommendationsMessage();
                             return;
                         }
 
-                        StringBuilder recommendationsContent = new StringBuilder();
-                        recommendationsContent.append("🏥 RECOMANDĂRILE TALE MEDICALE\n");
-                        recommendationsContent.append("═══════════════════════════════════════\n\n");
-
-                        int activeCount = 0;
-                        int completedCount = 0;
-
-                        for (QueryDocumentSnapshot document : task.getResult()) {
-                            Log.d(TAG, "loadMedicalRecommendations: Processing recommendation: " + document.getId());
-
-                            String descriere = document.getString("descriere");
-                            String tipRecomandare = document.getString("tipRecomandare");
-                            String status = document.getString("status");
-                            String medicID = document.getString("medicID");
-                            Long progres = document.getLong("progres");
-                            Object dataCreare = document.get("dataCreare");
-
-                            if ("active".equals(status)) {
-                                activeCount++;
-                            } else {
-                                completedCount++;
-                            }
-
-                            // Format the recommendation display
-                            recommendationsContent.append("📋 RECOMANDAREA #").append(activeCount + completedCount)
-                                    .append("\n");
-                            recommendationsContent.append("───────────────────────────────────────\n");
-
-                            if (descriere != null) {
-                                recommendationsContent.append("💡 Descriere: ").append(descriere).append("\n");
-                            }
-
-                            if (tipRecomandare != null) {
-                                String tipFormatted = formatRecommendationType(tipRecomandare);
-                                recommendationsContent.append("🏷️  Tip: ").append(tipFormatted).append("\n");
-                            }
-
-                            if (status != null) {
-                                String statusIcon = "active".equals(status) ? "🟢" : "✅";
-                                String statusText = "active".equals(status) ? "ACTIVĂ" : "COMPLETATĂ";
-                                recommendationsContent.append(statusIcon).append(" Status: ").append(statusText)
-                                        .append("\n");
-                            }
-
-                            if (progres != null) {
-                                recommendationsContent.append("📊 Progres: ").append(progres).append("%\n");
-
-                                // Add progress bar
-                                int progressBars = (int) (progres / 10);
-                                StringBuilder progressBar = new StringBuilder("🔋 [");
-                                for (int i = 0; i < 10; i++) {
-                                    if (i < progressBars) {
-                                        progressBar.append("█");
-                                    } else {
-                                        progressBar.append("░");
-                                    }
-                                }
-                                progressBar.append("]\n");
-                                recommendationsContent.append(progressBar);
-                            }
-
-                            if (medicID != null) {
-                                recommendationsContent.append("👨‍⚕️ Medic ID: ").append(medicID).append("\n");
-                            }
-
-                            if (dataCreare != null) {
-                                try {
-                                    // Handle Firestore Timestamp
-                                    String dateString = dataCreare.toString();
-                                    recommendationsContent.append("📅 Data creării: ").append(dateString).append("\n");
-                                } catch (Exception e) {
-                                    Log.w(TAG, "Error formatting date: " + e.getMessage());
-                                }
-                            }
-
-                            recommendationsContent.append("\n");
-                        }
-
-                        // Add summary
-                        recommendationsContent.append("═══════════════════════════════════════\n");
-                        recommendationsContent.append("📈 SUMAR RECOMANDĂRI\n");
-                        recommendationsContent.append("═══════════════════════════════════════\n");
-                        recommendationsContent.append("🟢 Active: ").append(activeCount).append("\n");
-                        recommendationsContent.append("✅ Completate: ").append(completedCount).append("\n");
-                        recommendationsContent.append("📊 Total: ").append(activeCount + completedCount).append("\n\n");
-
-                        // Add general health tips
-                        recommendationsContent.append("💡 SFATURI GENERALE DE SĂNĂTATE\n");
-                        recommendationsContent.append("═══════════════════════════════════════\n");
-                        recommendationsContent.append("• Urmați cu atenție recomandările medicale\n");
-                        recommendationsContent.append("• Băți minim 2 litri de apă pe zi\n");
-                        recommendationsContent.append("• Dormiți 7-8 ore pe noapte\n");
-                        recommendationsContent.append("• Exerciții fizice regulate\n");
-                        recommendationsContent.append("• Evitați stresul\n");
-                        recommendationsContent.append("• Control medical periodic\n");
-
-                        recommendationsText.setText(recommendationsContent.toString());
-                        Log.d(TAG, "loadMedicalRecommendations: Recommendations displayed successfully");
+                        displayRecommendations(task.getResult());
 
                     } else {
                         Log.e(TAG, "loadMedicalRecommendations: Error getting recommendations", task.getException());
@@ -180,7 +96,155 @@ public class RecommendationsActivity extends AppCompatActivity {
                 });
     }
 
+    private void showNoRecommendationsMessage() {
+        Log.d(TAG, "showNoRecommendationsMessage: No recommendations found for user");
+
+        StringBuilder content = new StringBuilder();
+        content.append("🏥 RECOMANDĂRI MEDICALE PERSONALIZATE\n");
+        content.append("═══════════════════════════════════════\n\n");
+        content.append("👤 Utilizator: ").append(currentUserEmail).append("\n");
+        content.append("🆔 ID Utilizator: ").append(currentUserId).append("\n\n");
+
+        content.append("📋 NU EXISTĂ RECOMANDĂRI PERSONALIZATE\n");
+        content.append("───────────────────────────────────────\n");
+        content.append("Nu s-au găsit recomandări medicale specifice\n");
+        content.append("pentru contul dumneavoastră în baza de date.\n\n");
+
+        content.append("💡 CE PUTEȚI FACE:\n");
+        content.append("───────────────────────────────────────\n");
+        content.append("• Contactați medicul pentru recomandări personalizate\n");
+        content.append("• Programați o consultație medicală\n");
+        content.append("• Urmați sfaturile generale de mai jos\n\n");
+
+        content.append("💡 SFATURI GENERALE DE SĂNĂTATE\n");
+        content.append("═══════════════════════════════════════\n");
+        content.append("🚶 Activitate fizică: 30 min/zi\n");
+        content.append("🥗 Alimentație echilibrată\n");
+        content.append("💧 Hidratare: minim 2L apă/zi\n");
+        content.append("😴 Somn odihnitor: 7-8 ore/noapte\n");
+        content.append("🩺 Măsurare regulată tensiune arterială\n");
+        content.append("😌 Evitarea stresului\n");
+        content.append("👨‍⚕️ Control medical periodic\n");
+        content.append("🚭 Evitarea fumatului\n");
+        content.append("🍷 Consum moderat de alcool\n\n");
+
+        content.append("📞 CONTACT MEDICAL DE URGENȚĂ: 112\n");
+        content.append("🏥 Pentru consultații: contactați medicul de familie");
+
+        recommendationsText.setText(content.toString());
+    }
+
+    private void displayRecommendations(Iterable<QueryDocumentSnapshot> results) {
+        Log.d(TAG, "displayRecommendations: Displaying recommendations");
+
+        StringBuilder recommendationsContent = new StringBuilder();
+        recommendationsContent.append("🏥 RECOMANDĂRILE TALE MEDICALE\n");
+        recommendationsContent.append("═══════════════════════════════════════\n");
+        recommendationsContent.append("👤 Utilizator: ").append(currentUserEmail).append("\n");
+        recommendationsContent.append("🆔 ID Utilizator: ").append(currentUserId).append("\n\n");
+
+        int activeCount = 0;
+        int completedCount = 0;
+
+        for (QueryDocumentSnapshot document : results) {
+            Log.d(TAG, "displayRecommendations: Processing recommendation: " + document.getId());
+
+            String descriere = document.getString("descriere");
+            String tipRecomandare = document.getString("tipRecomandare");
+            String status = document.getString("status");
+            String medicID = document.getString("medicID");
+            Long progres = document.getLong("progres");
+            Object dataCreare = document.get("dataCreare");
+            String pacientID = document.getString("pacientID");
+
+            if ("active".equals(status)) {
+                activeCount++;
+            } else {
+                completedCount++;
+            }
+
+            // Format the recommendation display
+            recommendationsContent.append("📋 RECOMANDAREA #").append(activeCount + completedCount).append("\n");
+            recommendationsContent.append("───────────────────────────────────────\n");
+            recommendationsContent.append("🆔 Document ID: ").append(document.getId()).append("\n");
+
+            if (descriere != null) {
+                recommendationsContent.append("💡 Descriere: ").append(descriere).append("\n");
+            }
+
+            if (tipRecomandare != null) {
+                String tipFormatted = formatRecommendationType(tipRecomandare);
+                recommendationsContent.append("🏷️ Tip: ").append(tipFormatted).append("\n");
+            }
+
+            if (status != null) {
+                String statusIcon = "active".equals(status) ? "🟢" : "✅";
+                String statusText = "active".equals(status) ? "ACTIVĂ" : "COMPLETATĂ";
+                recommendationsContent.append(statusIcon).append(" Status: ").append(statusText).append("\n");
+            }
+
+            if (progres != null) {
+                recommendationsContent.append("📊 Progres: ").append(progres).append("%\n");
+
+                // Add progress bar
+                int progressBars = (int) (progres / 10);
+                StringBuilder progressBar = new StringBuilder("🔋 [");
+                for (int i = 0; i < 10; i++) {
+                    if (i < progressBars) {
+                        progressBar.append("█");
+                    } else {
+                        progressBar.append("░");
+                    }
+                }
+                progressBar.append("]\n");
+                recommendationsContent.append(progressBar);
+            }
+
+            if (medicID != null) {
+                recommendationsContent.append("👨‍⚕️ Medic ID: ").append(medicID).append("\n");
+            }
+
+            if (pacientID != null) {
+                recommendationsContent.append("👤 Pacient ID: ").append(pacientID).append("\n");
+            }
+
+            if (dataCreare != null) {
+                try {
+                    String dateString = dataCreare.toString();
+                    recommendationsContent.append("📅 Data creării: ").append(dateString).append("\n");
+                } catch (Exception e) {
+                    Log.w(TAG, "Error formatting date: " + e.getMessage());
+                }
+            }
+
+            recommendationsContent.append("\n");
+        }
+
+        // Add summary
+        recommendationsContent.append("═══════════════════════════════════════\n");
+        recommendationsContent.append("📈 SUMAR RECOMANDĂRI\n");
+        recommendationsContent.append("═══════════════════════════════════════\n");
+        recommendationsContent.append("🟢 Active: ").append(activeCount).append("\n");
+        recommendationsContent.append("✅ Completate: ").append(completedCount).append("\n");
+        recommendationsContent.append("📊 Total: ").append(activeCount + completedCount).append("\n\n");
+
+        // Add general health tips
+        recommendationsContent.append("💡 SFATURI GENERALE DE SĂNĂTATE\n");
+        recommendationsContent.append("═══════════════════════════════════════\n");
+        recommendationsContent.append("• Urmați cu atenție recomandările medicale\n");
+        recommendationsContent.append("• Băți minim 2 litri de apă pe zi\n");
+        recommendationsContent.append("• Dormiți 7-8 ore pe noapte\n");
+        recommendationsContent.append("• Exerciții fizice regulate\n");
+        recommendationsContent.append("• Evitați stresul\n");
+        recommendationsContent.append("• Control medical periodic\n");
+
+        recommendationsText.setText(recommendationsContent.toString());
+        Log.d(TAG, "displayRecommendations: Recommendations displayed successfully");
+    }
+
     private String formatRecommendationType(String tip) {
+        if (tip == null)
+            return "Necunoscut";
         switch (tip.toLowerCase()) {
             case "stil-viata":
                 return "Stil de viață";
@@ -201,7 +265,10 @@ public class RecommendationsActivity extends AppCompatActivity {
         Log.d(TAG, "showLocalRecommendations: Showing default recommendations");
         String localRecommendations = "🏥 RECOMANDĂRI MEDICALE GENERALE\n" +
                 "═══════════════════════════════════════\n\n" +
-                "📋 Nu s-au găsit recomandări personalizate.\n\n" +
+                "📋 Nu s-au găsit recomandări personalizate în baza de date.\n\n" +
+                "🔍 DEBUG INFO:\n" +
+                "User ID căutat: " + currentUserId + "\n" +
+                "Email utilizator: " + currentUserEmail + "\n\n" +
                 "💡 SFATURI GENERALE DE SĂNĂTATE:\n" +
                 "───────────────────────────────────────\n" +
                 "1. 🚶 30 de minute de mișcare zilnic\n" +
