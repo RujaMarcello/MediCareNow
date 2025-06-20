@@ -28,7 +28,6 @@ import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.gson.Gson;
 import com.google.gson.JsonSyntaxException;
 
-import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Locale;
@@ -567,13 +566,15 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         }
 
         try {
-            String timestamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date());
-            Log.d(TAG, "saveToDatabase: Saving data for user: " + currentUserId + " at timestamp: " + timestamp);
+            // Use a Date object so Firestore stores a proper Timestamp instead of a
+            // formatted string
+            Date dataInregistrarii = new Date();
+            Log.d(TAG, "saveToDatabase: Saving data for user: " + currentUserId + " at date: " + dataInregistrarii);
 
             // Save pulse data
             Map<String, Object> pulseRecord = new HashMap<>();
             pulseRecord.put("valoare", data.pulse);
-            pulseRecord.put("timestamp", timestamp);
+            pulseRecord.put("dataInregistrarii", dataInregistrarii);
             pulseRecord.put("pacientID", currentUserId);
 
             db.collection("puls")
@@ -588,7 +589,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             // Save humidity data
             Map<String, Object> humidityRecord = new HashMap<>();
             humidityRecord.put("valoare", data.humidity);
-            humidityRecord.put("timestamp", timestamp);
+            humidityRecord.put("dataInregistrarii", dataInregistrarii);
             humidityRecord.put("pacientID", currentUserId);
 
             db.collection("umiditate")
@@ -603,7 +604,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             // Save EKG data
             Map<String, Object> ekgRecord = new HashMap<>();
             ekgRecord.put("valoare", data.ekg);
-            ekgRecord.put("timestamp", timestamp);
+            ekgRecord.put("dataInregistrarii", dataInregistrarii);
             ekgRecord.put("pacientID", currentUserId);
 
             db.collection("ekg")
@@ -621,7 +622,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
             healthRecord.put("puls", data.pulse);
             healthRecord.put("umiditate", data.humidity);
             healthRecord.put("ekg", data.ekg);
-            healthRecord.put("timestamp", timestamp);
+            healthRecord.put("dataInregistrarii", dataInregistrarii);
             healthRecord.put("pacientID", currentUserId);
 
             db.collection("valori_normale")
