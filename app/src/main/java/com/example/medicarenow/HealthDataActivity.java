@@ -72,6 +72,9 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     // Permission request code
     private static final int BLUETOOTH_PERMISSION_REQUEST_CODE = 1001;
 
+    private long lastPulseSaveTime = 0; // To avoid spamming DB unintentionally
+    private static final long MIN_PULSE_SAVE_INTERVAL_MS = 1000; // save at most once a second
+
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -664,7 +667,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                         currentHealthData = parsedData;
                         updateUI(currentHealthData);
                         checkThresholds(currentHealthData);
-                        saveToDatabase(currentHealthData);
+                        savePulse(currentHealthData.pulse);
                     });
 
                     lastUpdateTime = System.currentTimeMillis();
@@ -734,7 +737,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     currentHealthData = latestData;
                     updateUI(currentHealthData);
                     checkThresholds(currentHealthData);
-                    saveToDatabase(currentHealthData);
+                    savePulse(currentHealthData.pulse);
                     lastUpdateTime = System.currentTimeMillis();
                     Log.d(TAG, "processDataBuffer: UI updated with latest data from buffer");
                 } else {
@@ -1037,5 +1040,39 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
         float temperature = 0.0f;
         float humidity = 0.0f;
         float ekg = 0.0f;
+    }
+
+    /**
+     * Salvează imediat valoarea pulsului în colecția "puls".
+     * Pentru a preveni inserările foarte dese (de ex. la fiecare 50 ms),
+     * se impune un interval minim (1 s) între două inserări consecutive.
+     */
+    private void savePulse(int pulseValue) {
+        if (currentUserId == null || currentUserId.isEmpty()) {
+            Log.w(TAG, "savePulse: currentUserId is empty – nu se salvează");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastPulseSaveTime < MIN_PULSE_SAVE_INTERVAL_MS) {
+            Log.d(TAG, "savePulse: Ignorat – interval minim neoprit");
+            return;
+        }
+
+        try {
+            lastPulseSaveTime = now;
+
+            Map<String, Object> pulseRecord = new HashMap<>();
+            pulseRecord.put("valoare", pulseValue);
+            pulseRecord.put("dataInregistrarii", new Date());
+            pulseRecord.put("pacientID", currentUserId);
+
+            db.collection("puls")
+                    .add(pulseRecord)
+                    .addOnSuccessListener(docRef -> Log.d(TAG, "savePulse: Pulse salvat cu ID " + docRef.getId()))
+                    .addOnFailureListener(e -> Log.e(TAG, "savePulse: Eroare la salvare", e));
+        } catch (Exception e) {
+            Log.e(TAG, "savePulse: Exceptie la salvare", e);
+        }
     }
 }
