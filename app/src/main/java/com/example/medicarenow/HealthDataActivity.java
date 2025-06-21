@@ -78,6 +78,12 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     private long lastEkgSaveTime = 0; // To avoid spamming DB with EKG values
     private static final long MIN_EKG_SAVE_INTERVAL_MS = 1000; // save at most once a second
 
+    private long lastHumiditySaveTime = 0; // To avoid spamming DB with humidity values
+    private static final long MIN_HUMIDITY_SAVE_INTERVAL_MS = 1000; // save at most once a second
+
+    private long lastTemperatureSaveTime = 0; // To avoid spamming DB with temperature values
+    private static final long MIN_TEMPERATURE_SAVE_INTERVAL_MS = 1000; // save at most once a second
+
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -672,6 +678,8 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                         checkThresholds(currentHealthData);
                         savePulse(currentHealthData.pulse);
                         saveEkg(currentHealthData.ekg);
+                        saveHumidity(currentHealthData.humidity);
+                        saveTemperature(currentHealthData.temperature);
                     });
 
                     lastUpdateTime = System.currentTimeMillis();
@@ -743,6 +751,8 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     checkThresholds(currentHealthData);
                     savePulse(currentHealthData.pulse);
                     saveEkg(currentHealthData.ekg);
+                    saveHumidity(currentHealthData.humidity);
+                    saveTemperature(currentHealthData.temperature);
                     lastUpdateTime = System.currentTimeMillis();
                     Log.d(TAG, "processDataBuffer: UI updated with latest data from buffer");
                 } else {
@@ -1112,6 +1122,76 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     .addOnFailureListener(e -> Log.e(TAG, "saveEkg: Eroare la salvare", e));
         } catch (Exception e) {
             Log.e(TAG, "saveEkg: Exceptie la salvare", e);
+        }
+    }
+
+    /**
+     * Salvează imediat valoarea umidității în colecția "umiditate".
+     * Pentru a preveni inserările foarte dese (de ex. la fiecare 50 ms),
+     * se impune un interval minim (1 s) între două inserări consecutive.
+     */
+    private void saveHumidity(float humidityValue) {
+        if (currentUserId == null || currentUserId.isEmpty()) {
+            Log.w(TAG, "saveHumidity: currentUserId is empty – nu se salvează");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastHumiditySaveTime < MIN_HUMIDITY_SAVE_INTERVAL_MS) {
+            Log.d(TAG, "saveHumidity: Ignorat – interval minim neoprit");
+            return;
+        }
+
+        try {
+            lastHumiditySaveTime = now;
+
+            Map<String, Object> humidityRecord = new HashMap<>();
+            humidityRecord.put("valoare", humidityValue);
+            humidityRecord.put("dataInregistrarii", new Date());
+            humidityRecord.put("pacientID", currentUserId);
+
+            db.collection("umiditate")
+                    .add(humidityRecord)
+                    .addOnSuccessListener(
+                            docRef -> Log.d(TAG, "saveHumidity: Umiditate salvată cu ID " + docRef.getId()))
+                    .addOnFailureListener(e -> Log.e(TAG, "saveHumidity: Eroare la salvare", e));
+        } catch (Exception e) {
+            Log.e(TAG, "saveHumidity: Exceptie la salvare", e);
+        }
+    }
+
+    /**
+     * Salvează imediat valoarea temperaturii în colecția "temperatura".
+     * Pentru a preveni inserările foarte dese (de ex. la fiecare 50 ms),
+     * se impune un interval minim (1 s) între două inserări consecutive.
+     */
+    private void saveTemperature(float temperatureValue) {
+        if (currentUserId == null || currentUserId.isEmpty()) {
+            Log.w(TAG, "saveTemperature: currentUserId is empty – nu se salvează");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastTemperatureSaveTime < MIN_TEMPERATURE_SAVE_INTERVAL_MS) {
+            Log.d(TAG, "saveTemperature: Ignorat – interval minim neoprit");
+            return;
+        }
+
+        try {
+            lastTemperatureSaveTime = now;
+
+            Map<String, Object> temperatureRecord = new HashMap<>();
+            temperatureRecord.put("valoare", temperatureValue);
+            temperatureRecord.put("dataInregistrarii", new Date());
+            temperatureRecord.put("pacientID", currentUserId);
+
+            db.collection("temperatura")
+                    .add(temperatureRecord)
+                    .addOnSuccessListener(
+                            docRef -> Log.d(TAG, "saveTemperature: Temperatură salvată cu ID " + docRef.getId()))
+                    .addOnFailureListener(e -> Log.e(TAG, "saveTemperature: Eroare la salvare", e));
+        } catch (Exception e) {
+            Log.e(TAG, "saveTemperature: Exceptie la salvare", e);
         }
     }
 }
