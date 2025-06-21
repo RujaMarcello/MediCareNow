@@ -75,6 +75,9 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
     private long lastPulseSaveTime = 0; // To avoid spamming DB unintentionally
     private static final long MIN_PULSE_SAVE_INTERVAL_MS = 1000; // save at most once a second
 
+    private long lastEkgSaveTime = 0; // To avoid spamming DB with EKG values
+    private static final long MIN_EKG_SAVE_INTERVAL_MS = 1000; // save at most once a second
+
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -668,6 +671,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                         updateUI(currentHealthData);
                         checkThresholds(currentHealthData);
                         savePulse(currentHealthData.pulse);
+                        saveEkg(currentHealthData.ekg);
                     });
 
                     lastUpdateTime = System.currentTimeMillis();
@@ -738,6 +742,7 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     updateUI(currentHealthData);
                     checkThresholds(currentHealthData);
                     savePulse(currentHealthData.pulse);
+                    saveEkg(currentHealthData.ekg);
                     lastUpdateTime = System.currentTimeMillis();
                     Log.d(TAG, "processDataBuffer: UI updated with latest data from buffer");
                 } else {
@@ -1073,6 +1078,40 @@ public class HealthDataActivity extends AppCompatActivity implements BluetoothSe
                     .addOnFailureListener(e -> Log.e(TAG, "savePulse: Eroare la salvare", e));
         } catch (Exception e) {
             Log.e(TAG, "savePulse: Exceptie la salvare", e);
+        }
+    }
+
+    /**
+     * Salvează imediat valoarea EKG în colecția "ekg".
+     * Pentru a preveni inserările foarte dese (de ex. la fiecare 50 ms),
+     * se impune un interval minim (1 s) între două inserări consecutive.
+     */
+    private void saveEkg(float ekgValue) {
+        if (currentUserId == null || currentUserId.isEmpty()) {
+            Log.w(TAG, "saveEkg: currentUserId is empty – nu se salvează");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastEkgSaveTime < MIN_EKG_SAVE_INTERVAL_MS) {
+            Log.d(TAG, "saveEkg: Ignorat – interval minim neoprit");
+            return;
+        }
+
+        try {
+            lastEkgSaveTime = now;
+
+            Map<String, Object> ekgRecord = new HashMap<>();
+            ekgRecord.put("valoare", ekgValue);
+            ekgRecord.put("dataInregistrarii", new Date());
+            ekgRecord.put("pacientID", currentUserId);
+
+            db.collection("ekg")
+                    .add(ekgRecord)
+                    .addOnSuccessListener(docRef -> Log.d(TAG, "saveEkg: EKG salvat cu ID " + docRef.getId()))
+                    .addOnFailureListener(e -> Log.e(TAG, "saveEkg: Eroare la salvare", e));
+        } catch (Exception e) {
+            Log.e(TAG, "saveEkg: Exceptie la salvare", e);
         }
     }
 }

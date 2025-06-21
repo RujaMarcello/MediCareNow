@@ -14,6 +14,12 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+
+import com.google.firebase.firestore.FirebaseFirestore;
+
 public class ECGMonitoringActivity extends AppCompatActivity implements BluetoothService.BluetoothDataListener {
     private static final String TAG = "ECGMonitoringActivity";
 
@@ -28,6 +34,15 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
     // Bluetooth service connection
     private BluetoothService bluetoothService;
     private boolean isBound = false;
+
+    private String currentUserId;
+    private long lastPulseSaveTime = 0;
+    private static final long MIN_PULSE_SAVE_INTERVAL_MS = 1000; // evită spam-ul
+
+    private long lastEkgSaveTime = 0;
+    private static final long MIN_EKG_SAVE_INTERVAL_MS = 1000; // evită spam-ul pentru EKG
+
+    private FirebaseFirestore db;
 
     private ServiceConnection serviceConnection = new ServiceConnection() {
         @Override
@@ -87,6 +102,12 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
             }
         }, 3000);
 
+        // Initialise Firestore and user session
+        db = FirebaseFirestore.getInstance();
+        android.content.SharedPreferences prefs = getSharedPreferences("MediCareNow", MODE_PRIVATE);
+        currentUserId = prefs.getString("user_id", "");
+        Log.d(TAG, "onCreate: Current user ID: " + currentUserId);
+
         backButton.setOnClickListener(v -> finish());
     }
 
@@ -108,6 +129,9 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
                 // Add the EKG value to the graph
                 if (ekgValue > 0) {
                     ecgView.addRealEKGValue(ekgValue);
+
+                    // Salvează EKG-ul în Firestore
+                    saveEkgToDb(ekgValue);
                 }
 
                 // Use the real pulse value for heart rate display
@@ -343,5 +367,35 @@ public class ECGMonitoringActivity extends AppCompatActivity implements Bluetoot
         }
 
         Log.d(TAG, "onDestroy: ECGMonitoringActivity destroyed");
+    }
+
+    /**
+     * Inserează valoarea EKG în colecția "ekg" din Firestore.
+     */
+    private void saveEkgToDb(float ekgValue) {
+        if (currentUserId == null || currentUserId.isEmpty()) {
+            Log.w(TAG, "saveEkgToDb: user id missing");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (now - lastEkgSaveTime < MIN_EKG_SAVE_INTERVAL_MS) {
+            return; // prea des
+        }
+        lastEkgSaveTime = now;
+
+        try {
+            Map<String, Object> record = new HashMap<>();
+            record.put("valoare", ekgValue);
+            record.put("dataInregistrarii", new Date());
+            record.put("pacientID", currentUserId);
+
+            db.collection("ekg")
+                    .add(record)
+                    .addOnSuccessListener(doc -> Log.d(TAG, "saveEkgToDb: EKG salvat " + doc.getId()))
+                    .addOnFailureListener(e -> Log.e(TAG, "saveEkgToDb: eroare", e));
+        } catch (Exception e) {
+            Log.e(TAG, "saveEkgToDb: exceptie", e);
+        }
     }
 }
